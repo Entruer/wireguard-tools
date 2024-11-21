@@ -368,7 +368,7 @@ static int parse_segment_routing(const struct nlattr *attr, void *data)
 				peer->last_sr = peer->last_sr->next_sr;
 			}
 			memcpy(peer->last_sr->srh.segments, mnl_attr_get_payload(attr), mnl_attr_get_payload_len(attr));
-			peer->last_sr->srh.hdrlen = mnl_attr_get_payload_len(attr) / sizeof(struct in6_addr) * 2 + 1;
+			peer->last_sr->srh.hdrlen = (mnl_attr_get_payload_len(attr) / sizeof(struct in6_addr) + 1) * 2 ;
 	}
 
 	return MNL_CB_OK;
