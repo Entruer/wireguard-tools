@@ -19,6 +19,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/wireguard.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include "containers.h"
 #include "encoding.h"
 #include "netlink.h"
@@ -144,7 +145,8 @@ static int kernel_set_device(struct wgdevice *dev)
 	int ret = 0;
 	struct wgpeer *peer = NULL;
 	struct wgallowedip *allowedip = NULL;
-	struct nlattr *peers_nest, *peer_nest, *allowedips_nest, *allowedip_nest;
+	struct wgsr *sr = NULL;
+	struct nlattr *peers_nest, *peer_nest, *allowedips_nest, *allowedip_nest, *srs_nest, *sr_nest;
 	struct nlmsghdr *nlh;
 	struct mnlg_socket *nlg;
 
@@ -172,7 +174,7 @@ again:
 	}
 	if (!dev->first_peer)
 		goto send;
-	peers_nest = peer_nest = allowedips_nest = allowedip_nest = NULL;
+	peers_nest = peer_nest = allowedips_nest = allowedip_nest = srs_nest = sr_nest = NULL;
 	peers_nest = mnl_attr_nest_start(nlh, WGDEVICE_A_PEERS);
 	for (peer = peer ? peer : dev->first_peer; peer; peer = peer->next_peer) {
 		uint32_t flags = 0;
@@ -206,6 +208,28 @@ again:
 		if (flags) {
 			if (!mnl_attr_put_u32_check(nlh, SOCKET_BUFFER_SIZE, WGPEER_A_FLAGS, flags))
 				goto toobig_peers;
+		}
+		if (peer->first_sr){
+			if (!sr)
+				sr = peer->first_sr;
+			srs_nest = mnl_attr_nest_start_check(nlh, SOCKET_BUFFER_SIZE, WGPEER_A_SEGMENT_ROUTING);
+			if (!srs_nest)
+				goto toobig_sr;
+			for (; sr; sr = sr->next_sr) {
+				sr_nest = mnl_attr_nest_start_check(nlh, SOCKET_BUFFER_SIZE, 0);
+				if (!sr_nest)
+					goto toobig_sr;
+				char addr_str[INET6_ADDRSTRLEN];
+				for (int i = 0; i < (sr->srh.hdrlen - 1) / 2; i++) {
+					inet_ntop(AF_INET6, &sr->srh.segments[i], addr_str, sizeof(addr_str));
+				}
+				if (!mnl_attr_put_check(nlh, SOCKET_BUFFER_SIZE, WGSRH_A_SEGMENTS, (sr->srh.hdrlen - 1) / 2 * sizeof(struct in6_addr), sr->srh.segments))
+					goto toobig_sr;
+				mnl_attr_nest_end(nlh, sr_nest);
+				sr_nest = NULL;
+			}
+			mnl_attr_nest_end(nlh, srs_nest);
+			srs_nest = NULL;
 		}
 		if (peer->first_allowedip) {
 			if (!allowedip)
@@ -246,6 +270,14 @@ toobig_allowedips:
 		mnl_attr_nest_cancel(nlh, allowedip_nest);
 	if (allowedips_nest)
 		mnl_attr_nest_end(nlh, allowedips_nest);
+	mnl_attr_nest_end(nlh, peer_nest);
+	mnl_attr_nest_end(nlh, peers_nest);
+	goto send;
+toobig_sr:
+	if (sr_nest)
+		mnl_attr_nest_cancel(nlh, sr_nest);
+	if (srs_nest)
+		mnl_attr_nest_end(nlh, srs_nest);
 	mnl_attr_nest_end(nlh, peer_nest);
 	mnl_attr_nest_end(nlh, peers_nest);
 	goto send;
@@ -323,6 +355,31 @@ static int parse_allowedips(const struct nlattr *attr, void *data)
 	return MNL_CB_OK;
 }
 
+static int parse_segment_routing(const struct nlattr *attr, void *data)
+{
+	struct wgpeer *peer = data;
+	uint16_t segments_len;
+
+	switch (mnl_attr_get_type(attr)) {
+		case WGSRH_A_UNSPEC:
+			break;
+		case WGSRH_A_SEGMENTS:
+			segments_len = mnl_attr_get_payload_len(attr);
+			if (segments_len == 0 || segments_len % 16 != 0)
+				return MNL_CB_ERROR;
+			if (!peer->first_sr)
+				peer->first_sr = peer->last_sr = calloc(1, sizeof(*peer->first_sr) + segments_len + sizeof(struct sr6_tlv) + 6);
+			else {
+				peer->last_sr->next_sr = calloc(1, sizeof(*peer->last_sr) + segments_len + sizeof(struct sr6_tlv) + 6);
+				peer->last_sr = peer->last_sr->next_sr;
+			}
+			memcpy(peer->last_sr->srh.segments, mnl_attr_get_payload(attr), segments_len);
+			peer->last_sr->srh.hdrlen = (segments_len / sizeof(struct in6_addr) + 1) * 2 ;
+	}
+
+	return MNL_CB_OK;
+}
+
 static int parse_peer(const struct nlattr *attr, void *data)
 {
 	struct wgpeer *peer = data;
@@ -371,6 +428,8 @@ static int parse_peer(const struct nlattr *attr, void *data)
 		if (!mnl_attr_validate(attr, MNL_TYPE_U64))
 			peer->tx_bytes = mnl_attr_get_u64(attr);
 		break;
+	case WGPEER_A_SEGMENT_ROUTING:
+		return mnl_attr_parse_nested(attr, parse_segment_routing, peer);
 	case WGPEER_A_ALLOWEDIPS:
 		return mnl_attr_parse_nested(attr, parse_allowedips, peer);
 	}

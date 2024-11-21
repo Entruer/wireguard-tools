@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <limits.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -157,7 +158,7 @@ out:
 	return ret;
 }
 
-static inline bool parse_ip(struct wgallowedip *allowedip, const char *value)
+static inline bool parse_allowedip(struct wgallowedip *allowedip, const char *value)
 {
 	allowedip->family = AF_UNSPEC;
 	if (strchr(value, ':')) {
@@ -169,6 +170,15 @@ static inline bool parse_ip(struct wgallowedip *allowedip, const char *value)
 	}
 	if (allowedip->family == AF_UNSPEC) {
 		fprintf(stderr, "Unable to parse IP address: `%s'\n", value);
+		return false;
+	}
+	return true;
+}
+
+static inline bool parse_segment_routing_ip(struct in6_addr *ip, const char *value)
+{
+	if (inet_pton(AF_INET6, value, ip) != 1) {
+		fprintf(stderr, "Unable to parse IPv6 address: `%s'\n", value);
 		return false;
 	}
 	return true;
@@ -337,6 +347,68 @@ static bool validate_netmask(struct wgallowedip *allowedip)
 	return true;
 }
 
+static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last_sr, const char *value)
+{
+	struct wgsr *sr = *last_sr, *new_sr;
+	struct sr6_tlv *tlv;
+	char *mutable = strdup(value), *segment, *sep;
+	uint16_t len = 0;
+
+	if (!mutable) {
+		perror("strdup");
+		return false;
+	}
+	peer->flags |= WGPEER_REPLACE_SEGMENT_ROUTING;
+	if (!strlen(value)) {
+		free(mutable);
+		return true;
+	}
+	sep = strdup(value);
+
+	for (segment = strsep(&sep, ","); segment; segment = strsep(&sep, ","))
+		len++;
+	new_sr = calloc(1, sizeof(struct wgsr) + len * sizeof(struct in6_addr) + sizeof(struct sr6_tlv) + 6);
+	if (!new_sr) {
+		perror("calloc");
+		free(mutable);
+		return false;
+	}
+	new_sr->srh.hdrlen = len * 2 + 1;
+
+	sep = strdup(value);
+	int i = len - 1;
+	for (segment = strsep(&sep, ","); segment; segment = strsep(&sep, ","), i--) {
+		if(!parse_segment_routing_ip(&new_sr->srh.segments[i], segment)) {
+			free(new_sr);
+			free(mutable);
+			return false;
+		}
+	}
+	tlv = malloc(sizeof(struct sr6_tlv) + 6);
+	if (!tlv) {
+		perror("calloc");
+		free(new_sr);
+		free(mutable);
+		return false;
+	}
+	tlv->type = SR6_TLV_SEQUNCE;
+	tlv->len = 6;
+
+	memcpy(new_sr->srh.segments + (len << 4), tlv, sizeof(struct sr6_tlv) + 6);
+	free(tlv);
+	
+	if(sr)
+		sr->next_sr = new_sr;
+	else
+		peer->first_sr = new_sr;
+	sr = new_sr;
+
+	free(sep);
+	free(mutable);
+	*last_sr = sr;
+	return true;
+}
+
 static inline bool parse_allowedips(struct wgpeer *peer, struct wgallowedip **last_allowedip, const char *value)
 {
 	struct wgallowedip *allowedip = *last_allowedip, *new_allowedip;
@@ -367,7 +439,7 @@ static inline bool parse_allowedips(struct wgpeer *peer, struct wgallowedip **la
 			return false;
 		}
 
-		if (!parse_ip(new_allowedip, ip)) {
+		if (!parse_allowedip(new_allowedip, ip)) {
 			free(new_allowedip);
 			free(saved_entry);
 			free(mutable);
@@ -461,6 +533,8 @@ static bool process_line(struct config_ctx *ctx, const char *line)
 				ctx->last_peer->flags |= WGPEER_HAS_PUBLIC_KEY;
 		} else if (key_match("AllowedIPs"))
 			ret = parse_allowedips(ctx->last_peer, &ctx->last_allowedip, value);
+		else if (key_match("SegmentRouting"))
+			ret = parse_segment_routing(ctx->last_peer, &ctx->last_sr, value);
 		else if (key_match("PersistentKeepalive"))
 			ret = parse_persistent_keepalive(&ctx->last_peer->persistent_keepalive_interval, &ctx->last_peer->flags, value);
 		else if (key_match("PresharedKey")) {
@@ -566,6 +640,7 @@ struct wgdevice *config_read_cmd(const char *argv[], int argc)
 	struct wgdevice *device = calloc(1, sizeof(*device));
 	struct wgpeer *peer = NULL;
 	struct wgallowedip *allowedip = NULL;
+	struct wgsr *sr = NULL;
 
 	if (!device) {
 		perror("calloc");
@@ -613,6 +688,18 @@ struct wgdevice *config_read_cmd(const char *argv[], int argc)
 		} else if (!strcmp(argv[0], "endpoint") && argc >= 2 && peer) {
 			if (!parse_endpoint(&peer->endpoint.addr, argv[1]))
 				goto error;
+			argv += 2;
+			argc -= 2;
+		} else if (!strcmp(argv[0], "segment-routing") && argc >= 2 && peer) {
+			char *line = strip_spaces(argv[1]);
+
+			if (!line)
+				goto error;
+			if (!parse_segment_routing(peer, &sr, line)) {
+				free(line);
+				goto error;
+			}
+			free(line);
 			argv += 2;
 			argc -= 2;
 		} else if (!strcmp(argv[0], "allowed-ips") && argc >= 2 && peer) {
