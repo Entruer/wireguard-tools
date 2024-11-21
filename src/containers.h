@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #if defined(__linux__)
 #include <linux/wireguard.h>
+#include <linux/seg6.h>
 #elif defined(__OpenBSD__)
 #include <net/if_wg.h>
 #endif
@@ -41,9 +42,16 @@ struct wgallowedip {
 enum {
 	WGPEER_REMOVE_ME = 1U << 0,
 	WGPEER_REPLACE_ALLOWEDIPS = 1U << 1,
-	WGPEER_HAS_PUBLIC_KEY = 1U << 2,
-	WGPEER_HAS_PRESHARED_KEY = 1U << 3,
-	WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL = 1U << 4
+	WGPEER_REPLACE_SEGMENT_ROUTING = 1U << 2,
+	WGPEER_HAS_PUBLIC_KEY = 1U << 3,
+	WGPEER_HAS_PRESHARED_KEY = 1U << 4,
+	WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL = 1U << 5
+};
+
+struct wgsr {
+	struct wgsr *next_sr;
+
+	struct ipv6_sr_hdr srh;
 };
 
 struct wgpeer {
@@ -62,6 +70,7 @@ struct wgpeer {
 	uint64_t rx_bytes, tx_bytes;
 	uint16_t persistent_keepalive_interval;
 
+	struct wgsr *first_sr, *last_sr;
 	struct wgallowedip *first_allowedip, *last_allowedip;
 	struct wgpeer *next_peer;
 };
