@@ -349,6 +349,7 @@ static bool validate_netmask(struct wgallowedip *allowedip)
 
 static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last_sr, const char *value)
 {
+	printf("parse_segment_routing\n");
 	struct wgsr *sr = *last_sr, *new_sr;
 	char *mutable = strdup(value), *segment, *sep;
 	uint16_t len = 0;
@@ -373,6 +374,7 @@ static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last
 		return false;
 	}
 	new_sr->srh.hdrlen = (len + 1) * 2;
+	printf("new_sr->srh.hdrlen: %d\n", new_sr->srh.hdrlen);
 
 	// Parse the segments
 	sep = mutable;
@@ -388,6 +390,8 @@ static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last
 		sr->next_sr = new_sr;
 	else
 		peer->first_sr = new_sr;
+
+	printf("parse_segment_routing end\n");
 
 	free(mutable);
 	*last_sr = sr;

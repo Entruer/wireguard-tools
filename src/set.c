@@ -28,6 +28,8 @@ int set_main(int argc, const char *argv[])
 	strncpy(device->name, argv[1], IFNAMSIZ -  1);
 	device->name[IFNAMSIZ - 1] = '\0';
 
+	printf("Setting %s interface configuration...\n", device->name);
+
 	if (ipc_set_device(device) != 0) {
 		perror("Unable to modify interface");
 		goto cleanup;

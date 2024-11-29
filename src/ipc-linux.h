@@ -19,6 +19,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/wireguard.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include "containers.h"
 #include "encoding.h"
 #include "netlink.h"
@@ -145,7 +146,7 @@ static int kernel_set_device(struct wgdevice *dev)
 	struct wgpeer *peer = NULL;
 	struct wgallowedip *allowedip = NULL;
 	struct wgsr *sr = NULL;
-	struct nlattr *peers_nest, *peer_nest, *allowedips_nest, *allowedip_nest, *sr_nest;
+	struct nlattr *peers_nest, *peer_nest, *allowedips_nest, *allowedip_nest, *srs_nest, *sr_nest;
 	struct nlmsghdr *nlh;
 	struct mnlg_socket *nlg;
 
@@ -173,7 +174,7 @@ again:
 	}
 	if (!dev->first_peer)
 		goto send;
-	peers_nest = peer_nest = allowedips_nest = allowedip_nest = NULL;
+	peers_nest = peer_nest = allowedips_nest = allowedip_nest = srs_nest = sr_nest = NULL;
 	peers_nest = mnl_attr_nest_start(nlh, WGDEVICE_A_PEERS);
 	for (peer = peer ? peer : dev->first_peer; peer; peer = peer->next_peer) {
 		uint32_t flags = 0;
@@ -209,10 +210,14 @@ again:
 				goto toobig_peers;
 		}
 		if (peer->first_sr){
+			printf("Segment Routing : hdrlen %d\n", peer->first_sr->srh.hdrlen);
 			if (!sr)
 				sr = peer->first_sr;
-			sr_nest = mnl_attr_nest_start_check(nlh, SOCKET_BUFFER_SIZE, WGPEER_A_SEGMENT_ROUTING);
-			if (!sr_nest)
+			char addr_str[INET6_ADDRSTRLEN];
+			inet_ntop(AF_INET6, &peer->first_sr->srh.segments[0], addr_str, sizeof(addr_str));
+			printf("[Debug] Segment Routing 0: %s\n", addr_str);
+			srs_nest = mnl_attr_nest_start_check(nlh, SOCKET_BUFFER_SIZE, WGPEER_A_SEGMENT_ROUTING);
+			if (!srs_nest)
 				goto toobig_sr;
 			for (; sr; sr = sr->next_sr) {
 				sr_nest = mnl_attr_nest_start_check(nlh, SOCKET_BUFFER_SIZE, 0);
@@ -223,8 +228,9 @@ again:
 				mnl_attr_nest_end(nlh, sr_nest);
 				sr_nest = NULL;
 			}
-			mnl_attr_nest_end(nlh, sr_nest);
+			mnl_attr_nest_end(nlh, srs_nest);
 			sr_nest = NULL;
+			printf("[Debug] Successfully added segment routing\n");
 		}
 		if (peer->first_allowedip) {
 			if (!allowedip)
@@ -271,8 +277,9 @@ toobig_allowedips:
 toobig_sr:
 	if (sr_nest)
 		mnl_attr_nest_cancel(nlh, sr_nest);
-	if (peer_nest)
-		mnl_attr_nest_end(nlh, peer_nest);
+	if (srs_nest)
+		mnl_attr_nest_end(nlh, srs_nest);
+	mnl_attr_nest_end(nlh, peer_nest);
 	mnl_attr_nest_end(nlh, peers_nest);
 	goto send;
 toobig_peers:
