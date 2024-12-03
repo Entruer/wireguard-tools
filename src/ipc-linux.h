@@ -213,9 +213,6 @@ again:
 			printf("Segment Routing : hdrlen %d\n", peer->first_sr->srh.hdrlen);
 			if (!sr)
 				sr = peer->first_sr;
-			char addr_str[INET6_ADDRSTRLEN];
-			inet_ntop(AF_INET6, &peer->first_sr->srh.segments[0], addr_str, sizeof(addr_str));
-			printf("[Debug] Segment Routing 0: %s\n", addr_str);
 			srs_nest = mnl_attr_nest_start_check(nlh, SOCKET_BUFFER_SIZE, WGPEER_A_SEGMENT_ROUTING);
 			if (!srs_nest)
 				goto toobig_sr;
@@ -223,13 +220,21 @@ again:
 				sr_nest = mnl_attr_nest_start_check(nlh, SOCKET_BUFFER_SIZE, 0);
 				if (!sr_nest)
 					goto toobig_sr;
-				if (!mnl_attr_put_check(nlh, SOCKET_BUFFER_SIZE, WGSRH_A_SEGMENTS, sizeof(sr->srh.hdrlen / 2 - 1), sr->srh.segments))
+				char addr_str[INET6_ADDRSTRLEN];
+				for (int i = 0; i < peer->first_sr->srh.hdrlen / 2; i++) {
+					inet_ntop(AF_INET6, &peer->first_sr->srh.segments[i], addr_str, sizeof(addr_str));
+					printf("Segment Routing : %s\n", addr_str);
+				}
+				printf("Segment Routing for last: hdrlen %d\n", sr->srh.hdrlen);
+				printf("Netlink length: %ld\n", sr->srh.hdrlen / 2 * sizeof(struct in6_addr));
+				printf("Struct size: %ld\n", sizeof(*sr));
+				if (!mnl_attr_put_check(nlh, SOCKET_BUFFER_SIZE, WGSRH_A_SEGMENTS, sr->srh.hdrlen / 2 * sizeof(struct in6_addr), sr->srh.segments))
 					goto toobig_sr;
 				mnl_attr_nest_end(nlh, sr_nest);
 				sr_nest = NULL;
 			}
 			mnl_attr_nest_end(nlh, srs_nest);
-			sr_nest = NULL;
+			srs_nest = NULL;
 			printf("[Debug] Successfully added segment routing\n");
 		}
 		if (peer->first_allowedip) {
@@ -275,6 +280,7 @@ toobig_allowedips:
 	mnl_attr_nest_end(nlh, peers_nest);
 	goto send;
 toobig_sr:
+	printf("[Debug] Too big segment routing\n");
 	if (sr_nest)
 		mnl_attr_nest_cancel(nlh, sr_nest);
 	if (srs_nest)
@@ -292,16 +298,19 @@ send:
 		ret = -errno;
 		goto out;
 	}
+	printf("[Debug] Sent message successfully.\n");
 	errno = 0;
 	if (mnlg_socket_recv_run(nlg, NULL, NULL) < 0) {
 		ret = errno ? -errno : -EINVAL;
 		goto out;
 	}
+	printf("[Debug] Received message successfully.\n");
 	if (peer)
 		goto again;
 
 out:
 	mnlg_socket_close(nlg);
+	printf("[Debug] Closed socket. ret: %d\n", ret);
 	errno = -ret;
 	return ret;
 }
