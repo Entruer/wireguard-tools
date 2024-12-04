@@ -221,8 +221,8 @@ again:
 				if (!sr_nest)
 					goto toobig_sr;
 				char addr_str[INET6_ADDRSTRLEN];
-				for (int i = 0; i < peer->first_sr->srh.hdrlen / 2; i++) {
-					inet_ntop(AF_INET6, &peer->first_sr->srh.segments[i], addr_str, sizeof(addr_str));
+				for (int i = 0; i < sr->srh.hdrlen / 2; i++) {
+					inet_ntop(AF_INET6, &sr->srh.segments[i], addr_str, sizeof(addr_str));
 					printf("Segment Routing : %s\n", addr_str);
 				}
 				printf("Segment Routing for last: hdrlen %d\n", sr->srh.hdrlen);
