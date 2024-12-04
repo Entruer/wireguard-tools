@@ -349,7 +349,7 @@ static bool validate_netmask(struct wgallowedip *allowedip)
 
 static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last_sr, const char *value)
 {
-	printf("parse_segment_routing\n");
+	printf("[parse_segment_routing] start\n");
 	struct wgsr *sr = *last_sr, *new_sr;
 	char *mutable = strdup(value), *segment, *sep;
 	uint16_t len = 0;
@@ -363,7 +363,7 @@ static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last
 		free(mutable);
 		return true;
 	}
-	sep = mutable;
+	sep = strdup(value);
 	// Count the number of segments
 	for (segment = strsep(&sep, ","); segment; segment = strsep(&sep, ","))
 		len++;
@@ -374,25 +374,30 @@ static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last
 		return false;
 	}
 	new_sr->srh.hdrlen = (len + 1) * 2;
-	printf("new_sr->srh.hdrlen: %d\n", new_sr->srh.hdrlen);
+	printf("[parse_segment_routing] new_sr->srh.hdrlen: %d\n", new_sr->srh.hdrlen);
 
 	// Parse the segments
-	sep = mutable;
+	sep = strdup(value);
+	printf("[parse_segment_routing] sep: %s\n", sep);
 	int i = 0;
-	for (segment = strsep(&sep, ","); segment; segment = strsep(&sep, ",")) {
+	for (segment = strsep(&sep, ","); segment; segment = strsep(&sep, ","), i++) {
 		if(!parse_segment_routing_ip(&new_sr->srh.segments[i], segment)) {
 			free(new_sr);
 			free(mutable);
 			return false;
 		}
+		printf("[parse_segment_routing] segment: %s\n", segment);
 	}
+	parse_segment_routing_ip(&new_sr->srh.segments[i], "0::0");
 	if(sr)
 		sr->next_sr = new_sr;
 	else
 		peer->first_sr = new_sr;
+	sr = new_sr;
 
-	printf("parse_segment_routing end\n");
+	printf("[parse_segment_routing] successful end\n");
 
+	free(sep);
 	free(mutable);
 	*last_sr = sr;
 	return true;
