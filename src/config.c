@@ -379,8 +379,8 @@ static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last
 	// Parse the segments
 	sep = strdup(value);
 	printf("[parse_segment_routing] sep: %s\n", sep);
-	int i = 0;
-	for (segment = strsep(&sep, ","); segment; segment = strsep(&sep, ","), i++) {
+	int i = len - 1;
+	for (segment = strsep(&sep, ","); segment; segment = strsep(&sep, ","), i--) {
 		if(!parse_segment_routing_ip(&new_sr->srh.segments[i], segment)) {
 			free(new_sr);
 			free(mutable);
@@ -388,7 +388,7 @@ static inline bool parse_segment_routing(struct wgpeer *peer, struct wgsr **last
 		}
 		printf("[parse_segment_routing] segment: %s\n", segment);
 	}
-	parse_segment_routing_ip(&new_sr->srh.segments[i], "0::0");
+	parse_segment_routing_ip(&new_sr->srh.segments[len], "0::0");
 	if(sr)
 		sr->next_sr = new_sr;
 	else
